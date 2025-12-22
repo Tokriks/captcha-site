@@ -22,7 +22,52 @@
     </style>
 </head>
 <body>
-    <div class="container">
+body {
+    /* старые свойства оставляем */
+    background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);
+    background-size:400% 400%;
+    animation:bgMove 15s ease infinite;
+}
+
+@keyframes bgMove {
+    0%   { background-position:0% 50%; }
+    50%  { background-position:100% 50%; }
+    100% { background-position:0% 50%; }
+ const statusLoading = document.getElementById('statusLoading');
+let dots = 0;
+setInterval(() => {
+    if (statusLoading.style.display === 'block') {
+        dots = (dots + 1) % 4;
+        const base = '⏳ Проверка';
+        statusLoading.firstChild.nodeValue = base + '.'.repeat(dots) + ' ';
+    }
+}, 400);
+
+    body {
+    font-family:'Segoe UI',Arial,sans-serif;
+    background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    overflow:hidden;
+}
+
+.container {
+    background:#fff;
+    padding:40px;
+    border-radius:15px;
+    box-shadow:0 20px 40px rgba(0,0,0,0.1);
+    max-width:450px;
+    width:90%;
+    animation: fadeInUp 0.8s ease-out;
+}
+
+@keyframes fadeInUp {
+    from { opacity:0; transform:translateY(30px) scale(0.98); }
+    to   { opacity:1; transform:translateY(0) scale(1); }
+}
+ <div class="container">
         <h1>🔒 Проверка на безопасность</h1>
         <p style="text-align:center; color:#666; margin-bottom:20px;">Введите код с картинки для подтверждения</p>
         
@@ -52,6 +97,13 @@
 
         // === Генератор фейковой капчи ===
         function generateCaptcha() {
+            const canvasEl = document.getElementById('captchaCanvas');
+canvasEl.style.transition = 'transform 0.2s';
+canvasEl.style.transform = 'scale(1.02)';
+setTimeout(() => {
+    canvasEl.style.transform = 'scale(1)';
+}, 150);
+
             const canvas = document.getElementById('captchaCanvas');
             const ctx = canvas.getContext('2d');
             canvas.width = 300; canvas.height = 60;
